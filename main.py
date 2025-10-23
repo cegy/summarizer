@@ -1,3 +1,5 @@
+아래 코드를 분석해서 정리해서 알려줘
+
 import textwrap
 import streamlit as st
 from openai import OpenAI
@@ -7,7 +9,7 @@ from openai import OpenAI
 # ---------------------------
 st.set_page_config(page_title="학생 프로젝트 보고서 요약기+", page_icon="📝", layout="wide")
 st.title("📝 학생 프로젝트 보고서 요약기+")
-st.caption("보고서를 50/100/300/500자로 요약하고, AI 추천 질문 기반 관점 요약도 생성합니다. PDF 업로드 분석 지원!")
+st.caption("보고서를 50/100/300/500자로 요약하고, AI 추천 질문 기반 관점 요약도 생성합니다.")
 
 # OpenAI 클라이언트
 client = OpenAI(api_key=st.secrets["openai_api_key"])
@@ -49,12 +51,6 @@ with st.sidebar:
     )
     temperature = st.slider("창의성(temperature)", 0.0, 1.0, 0.2, 0.05)
     st.caption("※ 정확한 요약은 낮은 값 권장")
-
-    st.divider()
-    st.subheader("📎 PDF 업로드")
-    uploaded_pdf = st.file_uploader("보고서 PDF 업로드", type=["pdf"], accept_multiple_files=False, help="텍스트 기반 PDF 권장")
-    max_pages = st.number_input("최대 처리 페이지 수(전체=0)", min_value=0, value=0, step=1, help="매우 긴 PDF의 처리 시간을 줄일 때 사용")
-    do_replace = st.checkbox("추출 텍스트로 입력창 덮어쓰기", value=True)
 
 # ---------------------------
 # 유틸 함수
@@ -117,12 +113,14 @@ def generate_recommended_questions(report: str, k: int = 5) -> list:
         temperature=0.3,
     )
     lines = [ln.strip("-• ").strip() for ln in resp.output_text.split("\n") if ln.strip()]
+    # 상위 k개만, 길이 필터
     cleaned = []
     for q in lines:
         if len(q) <= 30 and q not in cleaned:
             cleaned.append(q)
         if len(cleaned) == k:
             break
+    # 부족하면 기본 백업 질문 추가
     backup = [
         "데이터 전처리의 타당성 중심",
         "모델 선택과 하이퍼파라미터 근거",
@@ -137,40 +135,15 @@ def generate_recommended_questions(report: str, k: int = 5) -> list:
             cleaned.append(b)
     return cleaned[:k]
 
-# ===== NEW: PDF 텍스트 추출 유틸 =====
-@st.cache_data(show_spinner=False)
-def extract_pdf_text(file_bytes: bytes, max_pages: int = 0) -> dict:
-    """
-    PDF에서 텍스트를 추출.
-    return: {"text": str, "pages": int, "page_texts": list[str]}
-    - max_pages=0이면 전체 처리
-    """
-    try:
-        import io
-        from pypdf import PdfReader
-        reader = PdfReader(io.BytesIO(file_bytes))
-        total_pages = len(reader.pages)
-        limit = total_pages if max_pages == 0 else min(max_pages, total_pages)
-        page_texts = []
-        for i in range(limit):
-            try:
-                t = reader.pages[i].extract_text() or ""
-            except Exception:
-                t = ""
-            page_texts.append(t)
-        text = "\n\n".join(page_texts).strip()
-        return {"text": text, "pages": total_pages, "page_texts": page_texts}
-    except Exception as e:
-        return {"text": "", "pages": 0, "page_texts": [], "error": str(e)}
-
 # ---------------------------
 # 입력 영역
 # ---------------------------
-st.subheader("1) 1000자 보고서 붙여넣기 / PDF 업로드")
+st.subheader("1) 1000자 보고서 붙여넣기")
 
 col_top = st.columns([1, 2, 1])
 with col_top[0]:
-    use_sample = st.checkbox("샘플 입력 사용", value=False, help="체크하면 입력창이 샘플 보고서로 채워집니다.")
+    use_sample = st.checkbox("샘플 입력 사용", value=False,
+                             help="체크하면 입력창이 샘플 보고서로 채워집니다.")
 with col_top[2]:
     clear_btn = st.button("입력 초기화", help="입력창과 추천 질문을 초기화합니다.")
 
@@ -180,43 +153,16 @@ if clear_btn:
     st.session_state.reco_questions = []
     st.session_state.selected_question = None
 
-# ===== NEW: PDF 추출 버튼 & 처리 =====
-if uploaded_pdf is not None:
-    with st.expander("PDF 분석 옵션/결과 보기", expanded=True):
-        col_pdf = st.columns([1, 1])
-        with col_pdf[0]:
-            extract_btn = st.button("📄 PDF에서 텍스트 추출")
-        with col_pdf[1]:
-            preview_len = st.slider("미리보기 글자 수", 200, 2000, 600, 100)
+if use_sample and (not st.session_state.report_input or st.session_state.report_input.strip() == ""):
+    # 샘플 사용이 체크되고 입력이 비어있으면 샘플로 채움
+    st.session_state.report_input = SAMPLE_REPORT
 
-        if extract_btn:
-            with st.spinner("PDF 텍스트 추출 중..."):
-                file_bytes = uploaded_pdf.getvalue()
-                info = extract_pdf_text(file_bytes, max_pages=int(max_pages))
-                text = info.get("text", "")
-                total_pages = info.get("pages", 0)
-                if info.get("error"):
-                    st.error(f"PDF 처리 오류: {info['error']}")
-                else:
-                    st.success(f"PDF 처리 완료: 총 {total_pages}페이지 / 추출된 문자 수: {len(text)}")
-                    if not text or len(text) < 50:
-                        st.warning("추출된 텍스트가 거의 없습니다. 스캔형(이미지) PDF일 수 있어요. OCR 환경이 필요합니다.")
-                    st.text_area("추출 텍스트 미리보기", value=text[:preview_len], height=200, help="앞부분 미리보기")
-                    if do_replace and text:
-                        st.session_state.report_input = text
-
-# 텍스트 입력창 (PDF에서 채워졌을 수 있음)
 report = st.text_area(
     "학생 보고서",
     key="report_input",
     height=280,
-    placeholder="학생이 작성한 프로젝트 보고서를 붙여넣거나, PDF를 업로드 후 추출하세요.",
+    placeholder="학생이 작성한 프로젝트 보고서를 붙여넣어 주세요.",
 )
-
-# 샘플 사용 로직 (입력 비어 있을 때만)
-if use_sample and (not st.session_state.report_input or st.session_state.report_input.strip() == ""):
-    st.session_state.report_input = SAMPLE_REPORT
-    report = st.session_state.report_input
 
 # ---------------------------
 # 버튼 영역
@@ -229,6 +175,7 @@ with colA:
 with colB:
     st.subheader("3) AI 추천 질문 → 관점 요약")
     gen_questions = st.button("AI 추천 질문 생성", use_container_width=True)
+    # 추천 질문 목록 표시 + 선택
     if st.session_state.reco_questions:
         st.markdown("**추천 질문 선택:**")
         st.session_state.selected_question = st.radio(
@@ -306,8 +253,6 @@ st.markdown(
     textwrap.dedent(
         """
         **사용 팁**
-        - PDF가 스캔본(이미지)일 경우 텍스트 추출이 어려울 수 있습니다. 이때는 OCR(예: Tesseract) 환경이 필요합니다.
-        - 매우 긴 PDF는 '최대 처리 페이지 수'를 활용해 부분 추출 후 요약하세요.
         - 보고서는 구체적으로 붙여넣을수록 요약 품질이 좋아집니다.
         - ‘AI 추천 질문’으로 생성된 항목을 선택하면, 그 관점에 특화된 요약을 생성합니다.
         """
