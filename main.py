@@ -1,3 +1,4 @@
+# main.py
 import textwrap
 import streamlit as st
 from openai import OpenAI
@@ -9,7 +10,7 @@ st.set_page_config(page_title="학생 프로젝트 보고서 요약기+", page_i
 st.title("📝 학생 프로젝트 보고서 요약기+")
 st.caption("보고서를 50/100/300/500자로 요약하고, AI 추천 질문 기반 관점 요약도 생성합니다. PDF 업로드 분석 지원!")
 
-# OpenAI 클라이언트
+# OpenAI 클라이언트 (Streamlit Secrets 사용)
 client = OpenAI(api_key=st.secrets["openai_api_key"])
 
 SAMPLE_REPORT = (
@@ -27,17 +28,19 @@ SAMPLE_REPORT = (
 )
 
 # ---------------------------
-# 세션 상태 기본값
+# 세션 상태 기본값 (위젯용/내부용 분리)
 # ---------------------------
-if "report_input" not in st.session_state:
+if "report_input" not in st.session_state:               # 내부 로직용
     st.session_state.report_input = ""
+if "report_input_widget" not in st.session_state:        # 위젯 바인딩용
+    st.session_state.report_input_widget = ""
 if "reco_questions" not in st.session_state:
     st.session_state.reco_questions = []
 if "selected_question" not in st.session_state:
     st.session_state.selected_question = None
 
 # ---------------------------
-# 사이드바: 모델/옵션
+# 사이드바: 모델/옵션 + PDF 업로드
 # ---------------------------
 with st.sidebar:
     st.header("⚙️ 옵션")
@@ -52,8 +55,12 @@ with st.sidebar:
 
     st.divider()
     st.subheader("📎 PDF 업로드")
-    uploaded_pdf = st.file_uploader("보고서 PDF 업로드", type=["pdf"], accept_multiple_files=False, help="텍스트 기반 PDF 권장")
-    max_pages = st.number_input("최대 처리 페이지 수(전체=0)", min_value=0, value=0, step=1, help="매우 긴 PDF의 처리 시간을 줄일 때 사용")
+    uploaded_pdf = st.file_uploader(
+        "보고서 PDF 업로드", type=["pdf"], accept_multiple_files=False, help="텍스트 기반 PDF 권장"
+    )
+    max_pages = st.number_input(
+        "최대 처리 페이지 수(전체=0)", min_value=0, value=0, step=1, help="매우 긴 PDF의 처리 시간을 줄일 때 사용"
+    )
     do_replace = st.checkbox("추출 텍스트로 입력창 덮어쓰기", value=True)
 
 # ---------------------------
@@ -128,7 +135,7 @@ def generate_recommended_questions(report: str, k: int = 5) -> list:
         "모델 선택과 하이퍼파라미터 근거",
         "예측 결과의 신뢰도와 한계",
         "협업의 역할 분담·갈등 해결",
-        "다음 단계와 개선 계획"
+        "다음 단계와 개선 계획",
     ]
     for b in backup:
         if len(cleaned) >= k:
@@ -174,11 +181,13 @@ with col_top[0]:
 with col_top[2]:
     clear_btn = st.button("입력 초기화", help="입력창과 추천 질문을 초기화합니다.")
 
-# 상태 업데이트
+# 상태 업데이트: 초기화
 if clear_btn:
     st.session_state.report_input = ""
+    st.session_state.report_input_widget = ""
     st.session_state.reco_questions = []
     st.session_state.selected_question = None
+    st.rerun()
 
 # ===== NEW: PDF 추출 버튼 & 처리 =====
 if uploaded_pdf is not None:
@@ -203,20 +212,32 @@ if uploaded_pdf is not None:
                         st.warning("추출된 텍스트가 거의 없습니다. 스캔형(이미지) PDF일 수 있어요. OCR 환경이 필요합니다.")
                     st.text_area("추출 텍스트 미리보기", value=text[:preview_len], height=200, help="앞부분 미리보기")
                     if do_replace and text:
+                        # 내부 상태 & 위젯 상태 동시 갱신 후 재렌더
                         st.session_state.report_input = text
+                        st.session_state.report_input_widget = text
+                        st.rerun()
 
-# 텍스트 입력창 (PDF에서 채워졌을 수 있음)
-report = st.text_area(
-    "학생 보고서",
-    key="report_input",
-    height=280,
-    placeholder="학생이 작성한 프로젝트 보고서를 붙여넣거나, PDF를 업로드 후 추출하세요.",
-)
-
-# 샘플 사용 로직 (입력 비어 있을 때만)
+# 샘플 사용: 입력이 비어 있을 때만 샘플로 채움
 if use_sample and (not st.session_state.report_input or st.session_state.report_input.strip() == ""):
     st.session_state.report_input = SAMPLE_REPORT
-    report = st.session_state.report_input
+    st.session_state.report_input_widget = SAMPLE_REPORT
+    st.rerun()
+
+# ---------------------------
+# 텍스트 입력 위젯 & 동기화 콜백
+# ---------------------------
+def _sync_report_input_from_widget():
+    # 위젯 → 내부 상태
+    st.session_state.report_input = st.session_state.report_input_widget
+
+report = st.text_area(
+    "학생 보고서",
+    key="report_input_widget",                    # 위젯 상태 key
+    value=st.session_state.report_input,          # 초기 값 반영
+    height=280,
+    placeholder="학생이 작성한 프로젝트 보고서를 붙여넣거나, PDF를 업로드 후 추출하세요.",
+    on_change=_sync_report_input_from_widget,     # 입력 시 내부 상태 동기화
+)
 
 # ---------------------------
 # 버튼 영역
@@ -234,7 +255,8 @@ with colB:
         st.session_state.selected_question = st.radio(
             label="질문을 선택하세요",
             options=st.session_state.reco_questions,
-            index=0 if st.session_state.selected_question not in st.session_state.reco_questions else st.session_state.reco_questions.index(st.session_state.selected_question),
+            index=0 if st.session_state.selected_question not in st.session_state.reco_questions
+                   else st.session_state.reco_questions.index(st.session_state.selected_question),
             key="selected_question_radio",
         )
         gen_q_summary = st.button("선택한 질문으로 관점 요약 생성", use_container_width=True)
@@ -245,7 +267,7 @@ with colB:
 # 동작: 요약 생성
 # ---------------------------
 if gen_default:
-    if not report.strip():
+    if not st.session_state.report_input.strip():
         st.warning("보고서를 먼저 입력해 주세요.")
     else:
         tabs = st.tabs(["50자", "100자", "300자", "500자"])
@@ -253,7 +275,7 @@ if gen_default:
             with tab:
                 with st.spinner(f"{limit}자 요약 생성 중..."):
                     try:
-                        summary = summarize_with_limit(report, limit)
+                        summary = summarize_with_limit(st.session_state.report_input, limit)
                         st.write(summary)
                         st.caption(f"문자 수: {len(summary)}")
                     except Exception as e:
@@ -263,12 +285,14 @@ if gen_default:
 # 동작: 추천 질문 생성
 # ---------------------------
 if gen_questions:
-    if not report.strip():
+    if not st.session_state.report_input.strip():
         st.warning("보고서를 먼저 입력하거나 '샘플 입력 사용'을 체크해 주세요.")
     else:
         with st.spinner("추천 질문 생성 중..."):
             try:
-                st.session_state.reco_questions = generate_recommended_questions(report, k=5)
+                st.session_state.reco_questions = generate_recommended_questions(
+                    st.session_state.report_input, k=5
+                )
                 st.success("추천 질문이 생성되었습니다. 오른쪽에서 선택하세요.")
             except Exception as e:
                 st.error(f"추천 질문 생성 중 오류가 발생했습니다: {e}")
@@ -277,7 +301,7 @@ if gen_questions:
 # 동작: 선택 질문 관점 요약
 # ---------------------------
 if gen_q_summary:
-    if not report.strip():
+    if not st.session_state.report_input.strip():
         st.warning("보고서를 먼저 입력해 주세요.")
     elif not st.session_state.selected_question:
         st.warning("추천 질문을 먼저 선택해 주세요.")
@@ -288,11 +312,11 @@ if gen_q_summary:
                 q_limits = [300, 500]
                 qt1, qt2 = st.tabs([f"관점 요약 {q_limits[0]}자", f"관점 요약 {q_limits[1]}자"])
                 with qt1:
-                    s1 = summarize_with_limit(report, q_limits[0], teacher_hint=q)
+                    s1 = summarize_with_limit(st.session_state.report_input, q_limits[0], teacher_hint=q)
                     st.write(s1)
                     st.caption(f"문자 수: {len(s1)}")
                 with qt2:
-                    s2 = summarize_with_limit(report, q_limits[1], teacher_hint=q)
+                    s2 = summarize_with_limit(st.session_state.report_input, q_limits[1], teacher_hint=q)
                     st.write(s2)
                     st.caption(f"문자 수: {len(s2)}")
             except Exception as e:
