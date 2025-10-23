@@ -1,5 +1,3 @@
-아래 코드를 분석해서 정리해서 알려줘
-
 import textwrap
 import streamlit as st
 from openai import OpenAI
